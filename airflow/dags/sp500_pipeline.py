@@ -10,21 +10,15 @@ from airflow import DAG
 from airflow.utils.dates import days_ago
 
 # Path to the .env file
-ENV_PATH = '/workspaces/taxi_pipeline/airflow/.env'
+ENV_PATH = '/workspaces/sp500_etl_pipeline/.env'
 # Load the environment variables from the .env file
 load_dotenv(ENV_PATH)
 
 # db credentials
-DB_USER = os.getenv('DB_USERNAME')
-DB_PASSWD = os.getenv('DB_PASSWORD')
-DB_HOST = os.getenv('DB_HOST')
-DB_PORT = os.getenv('DB_PORT')
-DB_NAME = os.getenv('DB_NAME')
 TABLE_NAME =os.getenv('TABLE_NAME')
 # directories
 FILES_PATH = os.getenv('FILES_PATH')
-DB_FILE_PATH = os.getenv('DB_FILE_PATH')
-# print(DB_FILE_PATH)
+DB_PATH = os.getenv('DB_PATH')
 
 
 def transform_data():
@@ -59,7 +53,7 @@ default_args = {
 # DAG DEFINITION
 dag = DAG(
     'sp500_etl_dag',
-    schedule_interval='0 6 * * *',
+    schedule_interval='0 6 * * 1-5',
     default_args=default_args,
 )
 
@@ -69,7 +63,7 @@ extract = BashOperator(
     bash_command='mkdir -p {{params.FILES_PATH}} && \
     wget -c https://datahub.io/core/s-and-p-500-companies/r/constituents.csv -O \
         {{ params.FILES_PATH }}/sp500_extract.csv',
-    params={'FILES_PATH': FILES_PATH, 'DB_PORT':DB_PORT},
+    params={'FILES_PATH': FILES_PATH},
     dag=dag,
 )
 
@@ -83,16 +77,11 @@ transform = PythonOperator(
 # TASK DEFINITION
 load = BashOperator(
     task_id='load',
-    bash_command = 'echo $(whoami) && cp \'{{params.FILES_PATH}}/sp500_transformed.csv\' {{params.DB_FILE_PATH}} &&'\
-        ' mysql -h {{params.DB_HOST}} -P {{params.DB_PORT}} -u {{params.DB_USER}} -p"{{params.DB_PASSWD}}" -D {{params.DB_NAME}} ' \
-        '-e "LOAD DATA INFILE \'{{params.DB_FILE_PATH}}/sp500_transformed.csv\' INTO TABLE {{params.TABLE_NAME}} ' \
-        'COLUMNS TERMINATED BY \',\' LINES TERMINATED BY \'\n\' IGNORE 1 LINES;"',
-
-    params = {'FILES_PATH': FILES_PATH, 'DB_FILE_PATH':DB_FILE_PATH,
-                'DB_PORT':DB_PORT, 'DB_USER':DB_USER, 'DB_PASSWD':DB_PASSWD, 
-                'DB_HOST':DB_HOST, 'DB_NAME':DB_NAME, 'TABLE_NAME':TABLE_NAME},
+    bash_command = 'sqlite3 {{params.DB_PATH}} <<EOF\n.read create_table.sql\n.quit\nEOF' \
+                   '\nsqlite3 {{params.DB_PATH}} -cmd ".mode csv" -cmd ".import --skip 1 {{params.FILES_PATH}}/sp500_transformed.csv {{params.TABLE_NAME}}"',
+    params={'FILES_PATH': FILES_PATH, 'DB_PATH': DB_PATH, 'TABLE_NAME': TABLE_NAME},
     dag=dag,
 )
 
 # TASK PIPELINE
-extract>>transform>>load
+extract >> transform >> load
